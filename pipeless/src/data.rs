@@ -16,7 +16,7 @@ pub enum UserData {
 
 pub enum InferenceOutput {
     Default(ndarray::ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<ndarray::IxDynImpl>>),
-    OnnxInferenceOutput(crate::stages::inference::onnx::OnnxInferenceOutput)
+    OnnxInferenceOutput(crate::stages::inference::onnx::OnnxInferenceOutput),
 }
 
 pub struct RgbFrame {
@@ -29,34 +29,43 @@ pub struct RgbFrame {
     dts: gst::ClockTime,
     duration: gst::ClockTime,
     fps: u8,
-    input_ts: f64, // epoch in seconds
+    input_ts: f64,
+    // epoch in seconds
     inference_input: ndarray::ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<ndarray::IxDynImpl>>,
     // We can convert the output into an arrayview since the user does not need to modify it and the inference runtimes returns a view, so we avoid a copy
     inference_output: InferenceOutput,
     pipeline_id: uuid::Uuid,
     user_data: UserData,
     frame_number: u64,
+    decibel_level: f64,
 }
+
 impl RgbFrame {
     pub fn new(
         original: ndarray::Array3<u8>,
         width: usize, height: usize,
         pts: gst::ClockTime, dts: gst::ClockTime, duration: gst::ClockTime,
         fps: u8, input_ts: f64,
-        pipeline_id: uuid::Uuid, frame_number: u64
+        pipeline_id: uuid::Uuid, frame_number: u64, decibel_level: f64,
     ) -> Self {
         let modified = original.to_owned();
         RgbFrame {
             uuid: uuid::Uuid::new_v4(),
-            original, modified,
-            width, height,
-            pts, dts, duration, fps,
+            original,
+            modified,
+            width,
+            height,
+            pts,
+            dts,
+            duration,
+            fps,
             input_ts,
             inference_input: ndarray::ArrayBase::zeros(ndarray::IxDyn(&[0])),
             inference_output: InferenceOutput::Default(ndarray::ArrayBase::zeros(ndarray::IxDyn(&[0]))),
             pipeline_id,
             user_data: UserData::Empty,
             frame_number,
+            decibel_level,
         }
     }
 
@@ -70,20 +79,25 @@ impl RgbFrame {
         inference_input: ndarray::ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<ndarray::IxDynImpl>>,
         inference_output: InferenceOutput,
         pipeline_id: &str,
-        user_data: UserData, frame_number: u64,
+        user_data: UserData, frame_number: u64, decibel_level: f64
     ) -> Self {
         RgbFrame {
             uuid: uuid::Uuid::from_str(uuid).unwrap(),
-            original, modified,
-            width, height,
+            original,
+            modified,
+            width,
+            height,
             pts: gst::ClockTime::from_mseconds(pts),
             dts: gst::ClockTime::from_mseconds(dts),
             duration: gst::ClockTime::from_mseconds(duration),
-            fps, input_ts,
-            inference_input, inference_output,
+            fps,
+            input_ts,
+            inference_input,
+            inference_output,
             pipeline_id: uuid::Uuid::from_str(pipeline_id).unwrap(),
             user_data: user_data,
             frame_number,
+            decibel_level,
         }
     }
 
@@ -97,7 +111,7 @@ impl RgbFrame {
         self.modified.view_mut()
     }
     pub fn update_mutable_pixels(
-        &mut self, view_mut: ndarray::ArrayViewMut3<u8>
+        &mut self, view_mut: ndarray::ArrayViewMut3<u8>,
     ) {
         self.modified.assign(&view_mut);
     }
@@ -128,7 +142,7 @@ impl RgbFrame {
     pub fn get_inference_input(&self) -> &ndarray::ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<ndarray::IxDynImpl>> {
         &self.inference_input
     }
-    pub fn get_inference_output(&self) -> &InferenceOutput{
+    pub fn get_inference_output(&self) -> &InferenceOutput {
         &self.inference_output
     }
     pub fn set_inference_input(&mut self, input_data: ndarray::ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<ndarray::IxDynImpl>>) {
@@ -149,31 +163,38 @@ impl RgbFrame {
     pub fn get_frame_number(&self) -> &u64 {
         &self.frame_number
     }
+    pub fn set_decibel_value(&mut self, decibel_value: f64) {
+        self.decibel_level = decibel_value;
+    }
+    pub fn get_decibel_value(&self) -> &f64 {
+        &self.decibel_level
+    }
 }
 
 pub enum Frame {
     RgbFrame(RgbFrame)
 }
+
 impl Frame {
     pub fn new_rgb(
         original: ndarray::Array3<u8>,
         width: usize, height: usize,
         pts: gst::ClockTime, dts: gst::ClockTime, duration: gst::ClockTime,
         fps: u8, input_ts: f64,
-        pipeline_id: uuid::Uuid, frame_number: u64,
+        pipeline_id: uuid::Uuid, frame_number: u64, decibel_level: f64,
     ) -> Self {
         let rgb = RgbFrame::new(
             original, width, height,
             pts, dts, duration,
             fps, input_ts,
-            pipeline_id, frame_number
+            pipeline_id, frame_number, decibel_level,
         );
         Self::RgbFrame(rgb)
     }
 
     pub fn set_original_pixels(&mut self, original_pixels: ndarray::Array3<u8>) {
         match self {
-            Frame::RgbFrame(frame) => { frame.set_original_pixels(original_pixels) },
+            Frame::RgbFrame(frame) => { frame.set_original_pixels(original_pixels) }
         }
     }
     pub fn get_original_pixels(&mut self) -> ndarray::ArrayView3<u8> {
@@ -193,12 +214,12 @@ impl Frame {
     }
     pub fn set_inference_input(&mut self, input_data: ndarray::ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<ndarray::IxDynImpl>>) {
         match self {
-            Frame::RgbFrame(frame) => { frame.set_inference_input(input_data); },
+            Frame::RgbFrame(frame) => { frame.set_inference_input(input_data); }
         }
     }
     pub fn set_inference_output(&mut self, output_data: InferenceOutput) {
         match self {
-            Frame::RgbFrame(frame) => { frame.set_inference_output(output_data); },
+            Frame::RgbFrame(frame) => { frame.set_inference_output(output_data); }
         }
     }
     pub fn get_pipeline_id(&self) -> &uuid::Uuid {

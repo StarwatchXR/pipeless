@@ -13,6 +13,7 @@ impl IntoPy<Py<PyAny>> for Frame {
         }
     }
 }
+
 /// Allows the Frame to be converted from Python to Rust
 impl<'source> FromPyObject<'source> for Frame {
     fn extract(ob: &'source PyAny) -> PyResult<Self> {
@@ -25,6 +26,7 @@ impl<'source> FromPyObject<'source> for Frame {
         }
     }
 }
+
 /// Allows the RgbFrame variant of Frame to be converted from Rust to Python
 impl IntoPy<Py<PyAny>> for RgbFrame {
     fn into_py(mut self, py: Python) -> Py<PyAny> {
@@ -43,19 +45,20 @@ impl IntoPy<Py<PyAny>> for RgbFrame {
         match self.get_inference_output() {
             crate::data::InferenceOutput::Default(out) => {
                 dict.set_item("inference_output", out.to_pyarray(py)).unwrap();
-            },
+            }
             crate::data::InferenceOutput::OnnxInferenceOutput(out) => {
                 let out_dict = pyo3::types::PyDict::new(py);
                 for (key, value) in out {
                     out_dict.set_item(key, value.to_pyarray(py)).unwrap();
                 }
                 dict.set_item("inference_output", out_dict).unwrap();
-            },
+            }
         };
 
         dict.set_item("pipeline_id", self.get_pipeline_id().to_string()).unwrap();
         dict.set_item("user_data", self.get_user_data()).unwrap();
         dict.set_item("frame_number", self.get_frame_number()).unwrap();
+        dict.set_item("decibel_level", self.get_decibel_value()).unwrap();
         dict.into()
     }
 }
@@ -90,15 +93,15 @@ impl<'source> FromPyObject<'source> for RgbFrame {
                             Ok(v) => {
                                 let inference_output_ndarray: ndarray::ArrayBase<_, ndarray::Dim<ndarray::IxDynImpl>> = v.to_owned_array().into_dyn();
                                 inference_output_ndarray
-                            },
+                            }
                             Err(err) => {
                                 warn!("Could not downcast Python object to PyArray. {}. Is it a NumPy array of float values? Hint: use .astype('float32') in your Python code", err.to_string());
                                 ndarray::ArrayBase::zeros(ndarray::IxDyn(&[]))
                             }
                         };
                         dict_items.insert(key_str, array);
-                    },
-                    None => { dict_items.insert(key_str, ndarray::ArrayBase::zeros(ndarray::IxDyn(&[]))); },
+                    }
+                    None => { dict_items.insert(key_str, ndarray::ArrayBase::zeros(ndarray::IxDyn(&[]))); }
                 }
             }
             crate::data::InferenceOutput::OnnxInferenceOutput(dict_items)
@@ -126,12 +129,13 @@ impl<'source> FromPyObject<'source> for RgbFrame {
         let pipeline_id = ob.get_item("pipeline_id").unwrap().extract()?;
         let user_data = ob.get_item("user_data").unwrap().extract()?;
         let frame_number = ob.get_item("frame_number").unwrap().extract()?;
+        let decibel_level = ob.get_item("decibel_level").unwrap().extract()?;
 
         let frame = RgbFrame::from_values(
             uuid, original, modified, width, height,
             pts, dts, duration, fps, input_ts,
             inference_input, inference_output,
-            pipeline_id, user_data, frame_number
+            pipeline_id, user_data, frame_number, decibel_level,
         );
 
         Ok(frame)
@@ -190,8 +194,8 @@ impl<'source> FromPyObject<'source> for UserData {
                     Some(v) => {
                         let value_data = UserData::extract(v)?;
                         dict_items.push((key_str, value_data));
-                    },
-                    None => { dict_items.push((key_str, UserData::Empty)); },
+                    }
+                    None => { dict_items.push((key_str, UserData::Empty)); }
                 }
             }
             Ok(UserData::Dictionary(dict_items))
@@ -207,13 +211,14 @@ impl<'source> FromPyObject<'source> for UserData {
 pub struct PythonStageContext {
     context: Py<pyo3::types::PyDict>,
 }
+
 impl ContextTrait<PythonStageContext> for PythonStageContext {
     fn init_context(stage_name: &str, init_code: &str) -> Self {
         let module_name = format!("{}_{}", stage_name, "init");
         let module_file_name = format!("{}.py", module_name);
         let py_ctx = Python::with_gil(|py| -> Py<pyo3::types::PyDict> {
             let init_module = pyo3::types::PyModule::from_code(
-                py, init_code, &module_file_name, &module_name
+                py, init_code, &module_file_name, &module_name,
             ).expect("Unable to create Python module from init hook");
 
             if let Ok(init_func) = init_module.getattr("init") {
@@ -223,7 +228,7 @@ impl ContextTrait<PythonStageContext> for PythonStageContext {
                         let py_dict: &pyo3::types::PyDict = ret.downcast()
                             .expect("Unable to cast returned dict to Python dict");
                         return py_dict.into();
-                    },
+                    }
                     Err(err) => {
                         error!("Error executing stage init: {}", err);
                         warn!("Defaulting to use of an empty stage context");
@@ -238,6 +243,7 @@ impl ContextTrait<PythonStageContext> for PythonStageContext {
         PythonStageContext { context: py_ctx }
     }
 }
+
 /// Allow to convert from Rust to Python
 impl IntoPy<Py<PyAny>> for &PythonStageContext {
     fn into_py(self, py: Python) -> Py<PyAny> {
@@ -252,8 +258,9 @@ impl IntoPy<Py<PyAny>> for &PythonStageContext {
 pub struct PythonHook {
     module: Py<pyo3::types::PyModule>,
 }
+
 impl PythonHook {
-    pub fn new(hook_type: HookType, stage_name: &str,py_code: &str) -> Self {
+    pub fn new(hook_type: HookType, stage_name: &str, py_code: &str) -> Self {
         // The wrapper removes the need for the user to return a frame from each hook
         // Also, injects the set and get functions for the KV store namespacing the keys
         // to avoid conflicts between streams in the format stage_name:pipeline_id:user_provided_key
@@ -282,12 +289,12 @@ def hook_wrapper(frame, context):
         let module = Python::with_gil(|py| -> Py<pyo3::types::PyModule> {
             // Create the hook module from user code
             let hook_module = pyo3::types::PyModule::from_code(
-                py, py_code, &module_file_name, &module_name
+                py, py_code, &module_file_name, &module_name,
             ).expect("Unable to create Python module from hook");
 
             // Create the wrapper module
             let wrapper_module = pyo3::types::PyModule::from_code(
-                py, &wrapper_py_code, &wrapper_module_file_name, &wrapper_module_name
+                py, &wrapper_py_code, &wrapper_module_file_name, &wrapper_module_name,
             ).expect("Unable to create wrapper Python module");
             // Add some util functions that the user can invoke from the Python code
             #[pyfunction]
@@ -310,6 +317,7 @@ def hook_wrapper(frame, context):
         &self.module
     }
 }
+
 impl HookTrait for PythonHook {
     /// Executes a Python hook by obtaining the GIL and passes the provided frame and stage context to it
     fn exec_hook(&self, mut frame: Frame, _stage_context: &Context) -> Option<Frame> {
@@ -318,7 +326,7 @@ impl HookTrait for PythonHook {
             let stage_context = match _stage_context {
                 crate::stages::stage::Context::PythonContext(python_context) => python_context.into_py(py),
                 crate::stages::stage::Context::EmptyContext => pyo3::types::PyDict::new(py).into_py(py),
-                _ =>  {
+                _ => {
                     error!("The stage context provided to the Python executor is not a Python context. Defaulting to empty context to avoid failure.");
                     pyo3::types::PyDict::new(py).into_py(py)
                 }
@@ -330,28 +338,28 @@ impl HookTrait for PythonHook {
                 // TODO: this acquires the Python GIL, breaking the concurrency, except when we are running on different cores thanks
                 //       to how we invoke frame processing using the Tokio thread pool, becuase it runs threads on all the cores.
                 // See: Follow this to run async code in python even with GIL: https://pyo3.rs/v0.11.1/parallelism
-                match hook_func.call1(py, (frame, stage_context.into_py(py),)) {
+                match hook_func.call1(py, (frame, stage_context.into_py(py), )) {
                     Ok(ret) => {
                         match ret.extract::<Frame>(py) {
                             Ok(mut f) => {
                                 // Avoid the user to accidentally modify the original frame
                                 f.set_original_pixels(original_pixels);
-                                return Some(f)
-                            },
+                                return Some(f);
+                            }
                             Err(err) => {
                                 error!("Error executing Python hook: {}", err);
-                                return None
-                            },
+                                return None;
+                            }
                         }
-                    },
+                    }
                     Err(err) => {
                         error!("Error executing hook: {}", err);
-                       return None
+                        return None;
                     }
                 };
             } else {
                 error!("'hook' function not found in hook module. Skipping execution");
-                return None
+                return None;
             }
         });
 
