@@ -73,7 +73,7 @@ fn on_new_sample(
     pipeless_bus_sender: &tokio::sync::mpsc::Sender<pipeless::events::Event>,
     frame_number: &mut u64,
     decibel_shared_state: &Arc<Mutex<Option<f64>>>,
-    uri: String
+    uri: String,
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
     let sample = appsink.pull_sample().map_err(|_err| {
         error!("Sample is None");
@@ -139,7 +139,7 @@ fn on_new_sample(
         pts, dts, duration,
         fps as u8, frame_input_instant,
         pipeless_pipeline_id, *frame_number,
-        current_decibel_value, uri
+        current_decibel_value, uri,
     );
     // The event takes ownership of the frame
     pipeless::events::publish_new_frame_change_event_sync(
@@ -185,9 +185,12 @@ fn on_new_audio_sample(
     let sum_of_squares: i64 = audio_data.iter().map(|&sample| (sample as i64).pow(2)).sum();
     let rms = ((sum_of_squares as f64) / audio_data.len() as f64).sqrt();
 
+    let reference_value = 32768.0; // Max value for 16-bit audio
+    let decibel = 20.0 * (rms / reference_value).log10();
+
     // Lock the shared state and update it with the new decibel value
     let mut decibel_lock = decibel_shared_state.lock().unwrap();
-    *decibel_lock = Some(rms);
+    *decibel_lock = Some(decibel);
 
 
     Ok(gst::FlowSuccess::Ok)
@@ -221,12 +224,27 @@ fn create_video_processing_bin(
     pipeless_pipeline_id: uuid::Uuid,
     pipeless_bus_sender: &tokio::sync::mpsc::Sender<pipeless::events::Event>,
     shared_decibel_state: &Arc<Mutex<Option<f64>>>,
-    uri: &str
+    uri: &str,
 ) -> Result<gst::Bin, InputPipelineError> {
+    // Config
+    let processing_frame_rate = 1;
+
     let bin = gst::Bin::new();
     let videoconvert = pipeless::gst::utils::create_generic_component("videoconvert", "videoconvert")?;
     // Only used when in NVidia devices
     let nvvidconv_opt = pipeless::gst::utils::create_generic_component("nvvidconv", "nvvidconv");
+
+    let videorate = pipeless::gst::utils::create_generic_component("videorate", "videorate")
+        .map_err(|_| InputPipelineError::new("Failed to create videorate element"))?;
+
+    let caps = gst::Caps::builder("video/x-raw")
+        .field("framerate", &gst::Fraction::new(processing_frame_rate, 1))
+        .build();
+
+    let capsfilter = pipeless::gst::utils::create_generic_component("capsfilter", "capsfilter")
+        .map_err(|_| InputPipelineError::new("Failed to create capsfilter"))?;
+    capsfilter.set_property("caps", &caps);
+
 
     // Force RGB output since workers process RGB
     let sink_caps = gst::Caps::from_str("video/x-raw,format=RGB")
@@ -257,7 +275,7 @@ fn create_video_processing_bin(
                         &pipeless_bus_sender,
                         &mut frame_number,
                         &shared_decibel_state_clone,
-                        uri_clone
+                        uri_clone,
                     )
                 }
             }).build();
@@ -265,7 +283,7 @@ fn create_video_processing_bin(
 
     let appsink_element = appsink.upcast_ref::<gst::Element>();
 
-    bin.add_many([&videoconvert, &appsink_element])
+    bin.add_many([&videoconvert, &videorate, &capsfilter, &appsink_element])
         .map_err(|_| { InputPipelineError::new("Unable to add elements to the input bin") })?;
 
 
@@ -302,7 +320,9 @@ fn create_video_processing_bin(
     }
 
 
-    videoconvert.link(&appsink).map_err(|_| InputPipelineError::new("Error linking video convert to appsink"))?;
+    videoconvert.link(&videorate).map_err(|_| InputPipelineError::new("Error linking video convert to video rate"))?;
+    videorate.link(&capsfilter).map_err(|_| InputPipelineError::new("Error linking video rate to caps filter"))?;
+    capsfilter.link(&appsink).map_err(|_| InputPipelineError::new("Error linking Caps filter to App sink"))?;
 
     return Ok(bin);
 }
@@ -339,7 +359,7 @@ fn create_audio_processing_bin(
     let audio_appsink_callbacks = gst_app::AppSinkCallbacks::builder()
         .new_sample({
             let pipeless_bus_sender = pipeless_bus_sender.clone();
-            move |appsink: &gst_app::AppSink|  {
+            move |appsink: &gst_app::AppSink| {
                 on_new_audio_sample(
                     pipeless_pipeline_id,
                     appsink,
@@ -466,7 +486,7 @@ fn create_gst_pipeline(
         pipeless_pipeline_id, &pipeless_bus_sender, &shared_decibel_sender,
     )?;
     let videobin = create_video_processing_bin(
-        pipeless_pipeline_id, &pipeless_bus_sender, &shared_decibel_sender, input_uri
+        pipeless_pipeline_id, &pipeless_bus_sender, &shared_decibel_sender, input_uri,
     )?;
 
 // Convert `Bin` to `Element` using `upcast` method
