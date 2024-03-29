@@ -1,0 +1,17 @@
+[Unit]
+Description=Orbit Play AI Service
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/orbit-play-ai
+# Set PATH and LD_LIBRARY_PATH according to the provided exports
+Environment="PATH=${PATH}:/home/ubuntu/.pipeless"
+Environment="LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/home/ubuntu/.pipeless:/home/ubuntu/.local/lib/python3.10/site-packages/tensorrt_libs"
+# Source the cargo environment if necessary - this might require a different approach
+ExecStartPre=/bin/bash -c 'source /home/ubuntu/.cargo/env'
+ExecStart=/home/ubuntu/orbit-play-ai/orbit-play-ai start --stages-dir /home/ubuntu/frame-wise-pipeless/pipeless --stream-buffer-size 10
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
