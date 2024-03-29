@@ -38,6 +38,7 @@ pub struct RgbFrame {
     user_data: UserData,
     frame_number: u64,
     decibel_level: f64,
+    uri: String,
 }
 
 impl RgbFrame {
@@ -46,7 +47,7 @@ impl RgbFrame {
         width: usize, height: usize,
         pts: gst::ClockTime, dts: gst::ClockTime, duration: gst::ClockTime,
         fps: u8, input_ts: f64,
-        pipeline_id: uuid::Uuid, frame_number: u64, decibel_level: f64,
+        pipeline_id: uuid::Uuid, frame_number: u64, decibel_level: f64, uri: String,
     ) -> Self {
         let modified = original.to_owned();
         RgbFrame {
@@ -66,6 +67,7 @@ impl RgbFrame {
             user_data: UserData::Empty,
             frame_number,
             decibel_level,
+            uri: uri,
         }
     }
 
@@ -79,7 +81,7 @@ impl RgbFrame {
         inference_input: ndarray::ArrayBase<ndarray::OwnedRepr<f32>, ndarray::Dim<ndarray::IxDynImpl>>,
         inference_output: InferenceOutput,
         pipeline_id: &str,
-        user_data: UserData, frame_number: u64, decibel_level: f64
+        user_data: UserData, frame_number: u64, decibel_level: f64, uri: &str,
     ) -> Self {
         RgbFrame {
             uuid: uuid::Uuid::from_str(uuid).unwrap(),
@@ -98,6 +100,7 @@ impl RgbFrame {
             user_data: user_data,
             frame_number,
             decibel_level,
+            uri: uri.to_string(),
         }
     }
 
@@ -169,6 +172,8 @@ impl RgbFrame {
     pub fn get_decibel_value(&self) -> &f64 {
         &self.decibel_level
     }
+    pub fn set_uri(&mut self, uri: String) { self.uri = uri }
+    pub fn get_uri(&self) -> &String { &self.uri }
 }
 
 pub enum Frame {
@@ -181,13 +186,13 @@ impl Frame {
         width: usize, height: usize,
         pts: gst::ClockTime, dts: gst::ClockTime, duration: gst::ClockTime,
         fps: u8, input_ts: f64,
-        pipeline_id: uuid::Uuid, frame_number: u64, decibel_level: f64,
+        pipeline_id: uuid::Uuid, frame_number: u64, decibel_level: f64, uri: String,
     ) -> Self {
         let rgb = RgbFrame::new(
             original, width, height,
             pts, dts, duration,
             fps, input_ts,
-            pipeline_id, frame_number, decibel_level,
+            pipeline_id, frame_number, decibel_level, uri,
         );
         Self::RgbFrame(rgb)
     }

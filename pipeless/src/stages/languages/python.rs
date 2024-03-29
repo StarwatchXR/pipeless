@@ -59,6 +59,7 @@ impl IntoPy<Py<PyAny>> for RgbFrame {
         dict.set_item("user_data", self.get_user_data()).unwrap();
         dict.set_item("frame_number", self.get_frame_number()).unwrap();
         dict.set_item("decibel_level", self.get_decibel_value()).unwrap();
+        dict.set_item("uri", self.get_uri()).unwrap();
         dict.into()
     }
 }
@@ -130,12 +131,13 @@ impl<'source> FromPyObject<'source> for RgbFrame {
         let user_data = ob.get_item("user_data").unwrap().extract()?;
         let frame_number = ob.get_item("frame_number").unwrap().extract()?;
         let decibel_level = ob.get_item("decibel_level").unwrap().extract()?;
+        let uri = ob.get_item("uri").unwrap().extract()?;
 
         let frame = RgbFrame::from_values(
             uuid, original, modified, width, height,
             pts, dts, duration, fps, input_ts,
             inference_input, inference_output,
-            pipeline_id, user_data, frame_number, decibel_level,
+            pipeline_id, user_data, frame_number, decibel_level, uri
         );
 
         Ok(frame)

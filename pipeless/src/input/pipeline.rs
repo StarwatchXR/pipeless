@@ -73,6 +73,7 @@ fn on_new_sample(
     pipeless_bus_sender: &tokio::sync::mpsc::Sender<pipeless::events::Event>,
     frame_number: &mut u64,
     decibel_shared_state: &Arc<Mutex<Option<f64>>>,
+    uri: String
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
     let sample = appsink.pull_sample().map_err(|_err| {
         error!("Sample is None");
@@ -138,7 +139,7 @@ fn on_new_sample(
         pts, dts, duration,
         fps as u8, frame_input_instant,
         pipeless_pipeline_id, *frame_number,
-        current_decibel_value
+        current_decibel_value, uri
     );
     // The event takes ownership of the frame
     pipeless::events::publish_new_frame_change_event_sync(
@@ -220,6 +221,7 @@ fn create_video_processing_bin(
     pipeless_pipeline_id: uuid::Uuid,
     pipeless_bus_sender: &tokio::sync::mpsc::Sender<pipeless::events::Event>,
     shared_decibel_state: &Arc<Mutex<Option<f64>>>,
+    uri: &str
 ) -> Result<gst::Bin, InputPipelineError> {
     let bin = gst::Bin::new();
     let videoconvert = pipeless::gst::utils::create_generic_component("videoconvert", "videoconvert")?;
@@ -240,6 +242,7 @@ fn create_video_processing_bin(
         .map_err(|_| { InputPipelineError::new("Unable to cast element to AppSink") })?;
 
     let shared_decibel_state_clone = Arc::clone(&shared_decibel_state);
+    let uri_owned = uri.to_owned();
 
     let appsink_callbacks = gst_app::AppSinkCallbacks::builder()
         .new_sample(
@@ -247,12 +250,14 @@ fn create_video_processing_bin(
                 let pipeless_bus_sender = pipeless_bus_sender.clone();
                 let mut frame_number: u64 = 0; // Used to set the frame number
                 move |appsink: &gst_app::AppSink| {
+                    let uri_clone = uri_owned.clone();
                     on_new_sample(
                         pipeless_pipeline_id,
                         appsink,
                         &pipeless_bus_sender,
                         &mut frame_number,
-                        &shared_decibel_state_clone
+                        &shared_decibel_state_clone,
+                        uri_clone
                     )
                 }
             }).build();
@@ -319,9 +324,6 @@ fn create_audio_processing_bin(
         }
     };
 
-    // let audio_sink_caps = gst::Caps::from_str("audio/x-raw,format=F32LE")
-    //     .map_err(|_| InputPipelineError::new("Unable to create caps from string"))?;
-
 
     let audiosink = gst::ElementFactory::make("appsink")
         .name("appsink")
@@ -342,7 +344,7 @@ fn create_audio_processing_bin(
                     pipeless_pipeline_id,
                     appsink,
                     &pipeless_bus_sender,
-                    &shared_decibel_state_clone
+                    &shared_decibel_state_clone,
                 )
             }
         })
@@ -447,48 +449,6 @@ fn on_bus_message(
     }
 }
 
-fn create_gst_pipeline1(
-    pipeless_pipeline_id: uuid::Uuid,
-    input_uri: &str,
-    pipeless_bus_sender: &tokio::sync::mpsc::Sender<pipeless::events::Event>,
-) -> Result<gst::Pipeline, InputPipelineError> {
-    let pipeline = gst::Pipeline::new();
-
-    // Create and configure the uridecodebin element
-    let uridecodebin = pipeless::gst::utils::create_generic_component("uridecodebin3", "source")?;
-    uridecodebin.set_property("uri", input_uri);
-
-    // Create and configure the appsink element
-    let appsink = gst::ElementFactory::make("appsink")
-        .name("appsink")
-        .property("emit-signals", true)
-        // .property("caps", audio_sink_caps)
-        .build()
-        .map_err(|_| { InputPipelineError::new("Failed to create appsink") })?
-        .dynamic_cast::<gst_app::AppSink>()
-        .map_err(|_| { InputPipelineError::new("Unable to cast element to AppSink") })?;
-
-    let appsink_element = appsink.upcast_ref::<gst::Element>();
-    // Add elements to the pipeline
-    pipeline.add_many(&[&uridecodebin, &appsink_element])
-        .expect("Failed to add elements to the pipeline");
-
-    // Automatically link the uridecodebin to the appsink when the source pad is created
-    uridecodebin.connect_pad_added(move |src, src_pad| {
-        let sink_pad = appsink.static_pad("sink").expect("Failed to get static sink pad from appsink");
-        if sink_pad.is_linked() {
-            warn!("We are already linked. Ignoring.");
-            return;
-        }
-
-        match src_pad.link(&sink_pad) {
-            Ok(_) => info!("Link succeeded."),
-            Err(err) => error!("Failed to link src pad to sink pad: {}", err),
-        }
-    });
-
-    Ok(pipeline)
-}
 
 fn create_gst_pipeline(
     pipeless_pipeline_id: uuid::Uuid,
@@ -503,10 +463,10 @@ fn create_gst_pipeline(
     let audioqueue = pipeless::gst::utils::create_generic_component("queue", "audioqueue")?;
 
     let audiobin = create_audio_processing_bin(
-        pipeless_pipeline_id, &pipeless_bus_sender, &shared_decibel_sender
+        pipeless_pipeline_id, &pipeless_bus_sender, &shared_decibel_sender,
     )?;
     let videobin = create_video_processing_bin(
-        pipeless_pipeline_id, &pipeless_bus_sender, &shared_decibel_sender
+        pipeless_pipeline_id, &pipeless_bus_sender, &shared_decibel_sender, input_uri
     )?;
 
 // Convert `Bin` to `Element` using `upcast` method
