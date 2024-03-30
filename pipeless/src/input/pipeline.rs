@@ -149,7 +149,6 @@ fn on_new_sample(
     Ok(gst::FlowSuccess::Ok)
 }
 
-
 fn on_new_audio_sample(
     pipeless_pipeline_id: uuid::Uuid,
     appsink: &gst_app::AppSink,
@@ -157,43 +156,82 @@ fn on_new_audio_sample(
     decibel_shared_state: &Arc<Mutex<Option<f64>>>,
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
     let sample = appsink.pull_sample().map_err(|_err| {
-        error!("Sample is None");
+        gst::element_error!(appsink, gst::CoreError::Failed, ("Failed to pull sample"));
         gst::FlowError::Error
     })?;
 
     let buffer = sample.buffer().ok_or_else(|| {
-        error!("The sample buffer is None");
+        gst::element_error!(appsink, gst::CoreError::Failed, ("Sample buffer is None"));
         gst::FlowError::Error
     })?;
 
-    let map = buffer.map_readable().map_err(|_err| {
-        error!("Unable to get sound buffer map");
+    let caps = sample.caps().ok_or_else(|| {
+        gst::element_error!(appsink, gst::CoreError::Failed, ("Sample caps are None"));
         gst::FlowError::Error
     })?;
 
-    // Assuming the audio samples are 16-bit signed integers (i16)
-    let samples = map.as_slice();
-    let mut audio_data = vec![0i16; samples.len() / 2];
-    // SAFETY: We're assuming the buffer contains i16 audio samples,
-    // and we're reinterpreting the bytes accordingly.
-    // This is safe if and only if the above assumption holds.
-    unsafe {
-        std::ptr::copy_nonoverlapping(samples.as_ptr() as *const i16, audio_data.as_mut_ptr(), audio_data.len());
-    }
+    let structure = caps.structure(0).ok_or_else(|| {
+        gst::element_error!(appsink, gst::CoreError::Failed, ("Caps structure is None"));
+        gst::FlowError::Error
+    })?;
 
-    // Calculate the RMS as an approximation of volume
-    let sum_of_squares: i64 = audio_data.iter().map(|&sample| (sample as i64).pow(2)).sum();
-    let rms = ((sum_of_squares as f64) / audio_data.len() as f64).sqrt();
+    // Extract format information from the caps structure
+    let format_type = structure.name();
+    let channels = structure.get::<i32>("channels").unwrap_or(1) as usize; // Default to mono if not specified
 
-    let reference_value = 32768.0; // Max value for 16-bit audio
-    let decibel = 20.0 * (rms / reference_value).log10();
+    // Map the buffer to access data
+    let map_info = buffer.map_readable().map_err(|_| {
+        gst::element_error!(appsink, gst::CoreError::Failed, ("Could not map buffer"));
+        gst::FlowError::Error
+    })?;
+
+    let format_type = structure.get::<&str>("format").expect("Failed to get format type");
+
+    // Handle different audio formats
+    let audio_data = match format_type {
+        "S16LE" => {
+            // Convert bytes to i16 samples and then to f64 for processing
+            let samples_slice = map_info.as_slice();
+            samples_slice
+                .chunks_exact(2)
+                .map(|c| i16::from_ne_bytes(c.try_into().unwrap()) as f64)
+                .collect::<Vec<_>>()
+        },
+        "F32LE" => {
+            // Convert bytes to f32 samples and then to f64 for processing
+            let samples = map_info.as_slice().chunks_exact(4).map(|c| f32::from_ne_bytes(c.try_into().unwrap()) as f64).collect::<Vec<_>>();
+            samples
+        },
+        _ => {
+            eprintln!("Unsupported audio format: {}", format_type);
+            return Err(gst::FlowError::Error);
+        },
+    };
+
+    // For stereo (or more channels), average the channels to mono
+    let mono_audio_data = if channels > 1 {
+        audio_data.chunks_exact(channels).map(|chunk| chunk.iter().sum::<f64>() / channels as f64).collect::<Vec<f64>>()
+    } else {
+        audio_data
+    };
+
+    let rms = calculate_rms(&mono_audio_data);
+    let decibels = calculate_decibels(rms);
 
     // Lock the shared state and update it with the new decibel value
     let mut decibel_lock = decibel_shared_state.lock().unwrap();
-    *decibel_lock = Some(decibel);
-
+    *decibel_lock = Some(decibels);
 
     Ok(gst::FlowSuccess::Ok)
+}
+
+fn calculate_rms(audio_data: &[f64]) -> f64 {
+    let sum_of_squares: f64 = audio_data.iter().map(|&sample| sample.powi(2)).sum();
+    (sum_of_squares / audio_data.len() as f64).sqrt()
+}
+
+fn calculate_decibels(rms: f64) -> f64 {
+    20.0 * rms.log10()
 }
 
 
@@ -332,6 +370,7 @@ fn create_audio_processing_bin(
     pipeless_bus_sender: &tokio::sync::mpsc::Sender<pipeless::events::Event>,
     shared_decibel_state: &Arc<Mutex<Option<f64>>>,
 ) -> Result<gst::Bin, InputPipelineError> {
+    info!("Creating audio processing bin");
     let bin = gst::Bin::new();
     let audioconvert = pipeless::gst::utils::create_generic_component("audioconvert", "audioconvert")?;
     let level = pipeless::gst::utils::create_generic_component("level", "level")?;
