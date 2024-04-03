@@ -75,6 +75,7 @@ fn on_new_sample(
     decibel_shared_state: &Arc<Mutex<Option<f64>>>,
     uri: String,
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
+    info!("New Sample");
     let sample = appsink.pull_sample().map_err(|_err| {
         error!("Sample is None");
         gst::FlowError::Error
@@ -264,13 +265,15 @@ fn create_video_processing_bin(
     shared_decibel_state: &Arc<Mutex<Option<f64>>>,
     uri: &str,
 ) -> Result<gst::Bin, InputPipelineError> {
+    info!("Creating video processing bin");
+
     // Config
     let processing_frame_rate = 1;
 
     let bin = gst::Bin::new();
     let videoconvert = pipeless::gst::utils::create_generic_component("videoconvert", "videoconvert")?;
-    // Only used when in NVidia devices
-    let nvvidconv_opt = pipeless::gst::utils::create_generic_component("nvvidconv", "nvvidconv");
+    // Only used when in Nvidia devices
+    let nvvidconv_opt = pipeless::gst::utils::create_generic_component("nvvideoconvert", "nvvidconv");
 
     let videorate = pipeless::gst::utils::create_generic_component("videorate", "videorate")
         .map_err(|_| InputPipelineError::new("Failed to create videorate element"))?;
@@ -326,6 +329,7 @@ fn create_video_processing_bin(
 
 
     if let Ok(nvvidconv) = &nvvidconv_opt {
+        info!("Adding nvvideoconvert");
         bin.add(nvvidconv)
             .map_err(|_| { InputPipelineError::new("Unable to add nvidconv to the input bin") })?;
         nvvidconv.link(&videoconvert) // We use unwrap here because it cannot be none
@@ -341,7 +345,7 @@ fn create_video_processing_bin(
         bin.add_pad(&ghostpath_sink)
             .map_err(|_| { InputPipelineError::new("Unable to add ghostpad to input bin") })?;
     } else {
-
+        info!("Skipping nvidia decoder");
         // Create ghost pad to be able to plug other components
         let videoconvert_sink_pad = match videoconvert.static_pad("sink") {
             Some(pad) => pad,
