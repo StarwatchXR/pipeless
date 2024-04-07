@@ -240,7 +240,8 @@ impl RestAdapter {
 
     pub fn start(
         &self,
-        _dispatcher_sender: tokio::sync::mpsc::UnboundedSender<pipeless::dispatcher::DispatcherEvent>
+        _dispatcher_sender: tokio::sync::mpsc::UnboundedSender<pipeless::dispatcher::DispatcherEvent>,
+        port: u16
     ) {
         let streams_table = self.streams_table.clone();
         let dispatcher_sender = _dispatcher_sender.clone();
@@ -309,7 +310,7 @@ impl RestAdapter {
             .or(remove_stream);
 
         let server = warp::serve(streams_endpoint)
-            .run(([0, 0, 0, 0], 3030));
+            .run(([0, 0, 0, 0], port));
 
         info!("REST adapter running");
 

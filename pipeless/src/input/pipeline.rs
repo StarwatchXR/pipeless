@@ -197,16 +197,16 @@ fn on_new_audio_sample(
                 .chunks_exact(2)
                 .map(|c| i16::from_ne_bytes(c.try_into().unwrap()) as f64)
                 .collect::<Vec<_>>()
-        },
+        }
         "F32LE" => {
             // Convert bytes to f32 samples and then to f64 for processing
             let samples = map_info.as_slice().chunks_exact(4).map(|c| f32::from_ne_bytes(c.try_into().unwrap()) as f64).collect::<Vec<_>>();
             samples
-        },
+        }
         _ => {
             eprintln!("Unsupported audio format: {}", format_type);
             return Err(gst::FlowError::Error);
-        },
+        }
     };
 
     // For stereo (or more channels), average the channels to mono
