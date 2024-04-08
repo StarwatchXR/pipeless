@@ -98,7 +98,7 @@ enum Commands {
         #[clap(long, default_value = "3030")]
         port: u16,
     },
-    /// Add resources such as streams
+    /// Add resosurces such as streams
     Add {
         #[command(subcommand)]
         command: Option<AddCommand>,

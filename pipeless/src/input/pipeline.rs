@@ -279,7 +279,7 @@ fn create_video_processing_bin(
         .map_err(|_| InputPipelineError::new("Failed to create videorate element"))?;
 
     let caps = gst::Caps::builder("video/x-raw")
-        .field("framerate", &gst::Fraction::new(processing_frame_rate, 1))
+        .field("framerate", &gst::Fraction::new(1, 2))
         .build();
 
     let capsfilter = pipeless::gst::utils::create_generic_component("capsfilter", "capsfilter")
