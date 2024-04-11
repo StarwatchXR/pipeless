@@ -1,0 +1,33 @@
+[Unit]
+Description=Orbit Play AI Service
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pipeless/pipeless
+
+# Remove file descriptor limit
+LimitNOFILE=infinity
+# Remove process/thread limit
+LimitNPROC=infinity
+# Remove memory limit
+MemoryMax=infinity
+# CPU time limit (not recommended to set to infinity, adjust with caution)
+LimitCPU=infinity
+# Increase maximum number of open files
+LimitNOFILE=1048576
+# Increase maximum number of processes
+LimitNPROC=65535
+
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin:/home/ubuntu/.pipeless"
+Environment="LD_LIBRARY_PATH=/home/ubuntu/pipeless/pipeless/target/release:/home/ubuntu/.local/lib/python3.10/site-packages/tensorrt_libs:/usr/lib:/usr/local/lib"
+
+# Source the cargo environment if necessary - this might require a different approach
+ExecStartPre=/bin/bash -c 'echo LD_LIBRARY_PATH=${LD_LIBRARY_PATH} && ls -l /home/ubuntu/pipeless/pipeless/target/release'
+
+ExecStart=/home/ubuntu/pipeless/pipeless/target/release/pipeless-ai start --stages-dir /home/ubuntu/frame-wise-pipeless/pipeless --stream-buffer-size 20 --port 3030
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

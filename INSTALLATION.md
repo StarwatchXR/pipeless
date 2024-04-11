@@ -8,7 +8,6 @@ Max out network and nlimit
 
 [//]: # File Content
 ```
-vm.swappiness=50
 fs.file-max = 100000
 
 net.core.rmem_max = 16777216
@@ -37,4 +36,10 @@ net.ipv4.tcp_tw_recycle = 1
 ```shell
 sudo ln -s /home/ubuntu/pipeless/pipeless/target/release/libonnxruntime.so.1.16.0 /usr/local/lib/libonnxruntime.so.1.16.0
 sudo ldconfig
+```
+
+[//]: #Driver Permission
+Set permission for nvidia driver incase it fails
+```shell
+sudo chmod a+rw /dev/nvidia0
 ```
