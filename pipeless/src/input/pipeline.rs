@@ -177,41 +177,39 @@ fn on_new_audio_sample(
     })?;
 
     // Extract format information from the caps structure
-    let format_type = structure.name();
     let channels = structure.get::<i32>("channels").unwrap_or(1) as usize; // Default to mono if not specified
+    let format_type = structure.get::<&str>("format").or_else(|_| {
+        gst::element_error!(appsink, gst::CoreError::Failed, ("Failed to get format type"));
+        Err(gst::FlowError::Error)
+    })?;
 
-    // Map the buffer to access data
+
     let map_info = buffer.map_readable().map_err(|_| {
         gst::element_error!(appsink, gst::CoreError::Failed, ("Could not map buffer"));
         gst::FlowError::Error
     })?;
 
-    let format_type = structure.get::<&str>("format").expect("Failed to get format type");
-
     // Handle different audio formats
     let audio_data = match format_type {
-        "S16LE" => {
-            // Convert bytes to i16 samples and then to f64 for processing
-            let samples_slice = map_info.as_slice();
-            samples_slice
-                .chunks_exact(2)
-                .map(|c| i16::from_ne_bytes(c.try_into().unwrap()) as f64)
-                .collect::<Vec<_>>()
-        }
-        "F32LE" => {
-            // Convert bytes to f32 samples and then to f64 for processing
-            let samples = map_info.as_slice().chunks_exact(4).map(|c| f32::from_ne_bytes(c.try_into().unwrap()) as f64).collect::<Vec<_>>();
-            samples
-        }
+        "S16LE" => map_info.as_slice()
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes(c.try_into().unwrap()) as f64)
+            .collect::<Vec<_>>(),
+        "F32LE" => map_info.as_slice()
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()) as f64)
+            .collect::<Vec<_>>(),
         _ => {
-            eprintln!("Unsupported audio format: {}", format_type);
+            gst::element_error!(appsink, gst::CoreError::Failed, ("Unsupported audio format: {}", format_type));
             return Err(gst::FlowError::Error);
         }
     };
 
     // For stereo (or more channels), average the channels to mono
     let mono_audio_data = if channels > 1 {
-        audio_data.chunks_exact(channels).map(|chunk| chunk.iter().sum::<f64>() / channels as f64).collect::<Vec<f64>>()
+        audio_data.chunks_exact(channels)
+            .map(|chunk| chunk.iter().sum::<f64>() / channels as f64)
+            .collect::<Vec<f64>>()
     } else {
         audio_data
     };
@@ -226,15 +224,24 @@ fn on_new_audio_sample(
     Ok(gst::FlowSuccess::Ok)
 }
 
-fn calculate_rms(audio_data: &[f64]) -> f64 {
-    let sum_of_squares: f64 = audio_data.iter().map(|&sample| sample.powi(2)).sum();
-    (sum_of_squares / audio_data.len() as f64).sqrt()
+fn calculate_rms(samples: &[f64]) -> f64 {
+    let sum_of_squares: f64 = samples.iter().map(|&sample| sample.powi(2)).sum();
+    let rms = if samples.is_empty() {
+        0.0
+    } else {
+        (sum_of_squares / samples.len() as f64).sqrt()
+    };
+    rms
 }
 
+/// Converts RMS value to decibels (dB).
 fn calculate_decibels(rms: f64) -> f64 {
-    20.0 * rms.log10()
+    if rms > 0.0 {
+        20.0 * (rms.log10())
+    } else {
+        f64::NEG_INFINITY  // RMS of zero leads to negative infinity in dB
+    }
 }
-
 
 fn on_pad_added(
     pad: &gst::Pad,
